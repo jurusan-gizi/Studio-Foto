@@ -127,7 +127,7 @@ document.addEventListener('drop', (e) => { e.preventDefault(); const f = e.dataT
 
 /* ---------- hapus latar (AI di perangkat) ---------- */
 let worker = null;
-const publicPath = () => new URL('engine/data/', location.href).href;
+const publicPath = () => new URL('engine/', location.href).href;
 function setBusy(on, title, msg, pct) {
   $('#busy').hidden = !on;
   if (title) $('#busyTitle').textContent = title;
@@ -636,7 +636,7 @@ async function prepareOffline() {
   try {
     await navigator.serviceWorker.register('sw.js');
     await navigator.serviceWorker.ready;
-    const base = new URL('engine/data/', location.href).href;
+    const base = new URL('engine/', location.href).href;
     const cache = await caches.open('pasfoto-engine-v1');
     let resp = await cache.match(base + 'resources.json');
     if (!resp) { const r = await fetch(base + 'resources.json'); if (!r.ok) throw new Error('resources'); await cache.put(base + 'resources.json', r.clone()); resp = r; }

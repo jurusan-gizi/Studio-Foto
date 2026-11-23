@@ -1,5 +1,5 @@
 // Service worker Studio Pas Foto — cache-first agar jalan tanpa internet
-const SHELL = 'pasfoto-shell-v1';
+const SHELL = 'pasfoto-shell-v2';
 const ENGINE = 'pasfoto-engine-v1'; // model AI (±65 MB) disimpan terpisah, tidak dihapus saat update
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest',
   'engine/bgr.mjs', 'engine/worker.js', 'icons/icon-192.png', 'icons/icon-512.png'];
@@ -15,7 +15,8 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET' || new URL(req.url).origin !== location.origin) return;
-  const isEngine = req.url.includes('/engine/data/');
+  const path = new URL(req.url).pathname;
+  const isEngine = /\/engine\/([0-9a-f]{64}|resources\.json)$/.test(path);
   e.respondWith((async () => {
     const hit = await caches.match(req, { ignoreSearch: true });
     if (hit) {
