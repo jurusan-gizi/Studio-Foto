@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Studio Pas Foto</title>
+<meta name="theme-color" content="#1c1d21">
+<meta name="description" content="Buat pas foto formal latar merah, abu-abu, biru — offline, langsung di perangkat.">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="logo"></span><b>Studio Pas Foto</b></div>
+  <button id="offlinePill" class="pill" type="button" title="Status mode offline">Memeriksa…</button>
+</header>
+
+<nav class="steps" id="steps">
+  <button data-step="1" class="on" type="button"><i>1</i>Foto</button>
+  <button data-step="2" type="button" disabled><i>2</i>Latar</button>
+  <button data-step="3" type="button" disabled><i>3</i>Atur</button>
+  <button data-step="4" type="button" disabled><i>4</i>Cetak</button>
+</nav>
+
+<main class="wrap">
+  <!-- ========== LANGKAH 1: FOTO ========== -->
+  <section class="panel" data-panel="1">
+    <div class="hero">
+      <div class="hero-art" aria-hidden="true">
+        <div class="card r"><div class="sil"></div></div>
+        <div class="card g"><div class="sil"></div></div>
+        <div class="card b"><div class="sil"></div></div>
+      </div>
+      <div class="hero-txt">
+        <h1>Pas foto formal, langsung dari HP</h1>
+        <p>Ambil atau pilih foto, latar dihapus otomatis, ganti dengan merah atau abu-abu, lalu unduh atau cetak dalam ukuran 2×3 sampai 4×6. Semua diproses di perangkat ini — foto tidak dikirim ke mana pun.</p>
+        <div class="row">
+          <label class="btn primary big">Ambil foto
+            <input id="inCam" type="file" accept="image/*" capture="user" hidden>
+          </label>
+          <label class="btn big">Pilih dari galeri
+            <input id="inGal" type="file" accept="image/*" hidden>
+          </label>
+        </div>
+        <p class="tip">Tips: berdiri ±1 meter dari dinding polos, cahaya dari depan, wajah menghadap lurus, bahu terlihat.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== LANGKAH 2: LATAR ========== -->
+  <section class="panel" data-panel="2" hidden>
+    <div class="split">
+      <div class="stage" id="bgStageWrap">
+        <div class="scroller" id="bgScroller"><canvas id="bgCanvas"></canvas></div>
+        <div class="busy" id="busy" hidden>
+          <div class="spin"></div>
+          <b id="busyTitle">Menghapus latar…</b>
+          <small id="busyMsg">Di HP bisa 10–40 detik.</small>
+          <div class="bar"><span id="busyBar"></span></div>
+        </div>
+      </div>
+      <div class="ctrl">
+        <h2>Warna latar</h2>
+        <div class="swatches" id="swatches"></div>
+        <label class="field inline">Warna lain <input type="color" id="customColor" value="#d7141a"></label>
+
+        <h2>Rapikan tepi</h2>
+        <label class="field">Haluskan tepi <output id="o_feather">1</output>
+          <input type="range" id="feather" min="0" max="8" step="1" value="1"></label>
+        <label class="field">Kikis tepi <output id="o_choke">2</output>
+          <input type="range" id="choke" min="0" max="10" step="1" value="2"></label>
+
+        <h2>Kuas perbaikan <small>untuk rambut/jilbab yang terpotong</small></h2>
+        <div class="seg" id="brushMode">
+          <button type="button" data-m="pan" class="on">Geser</button>
+          <button type="button" data-m="erase">Hapus</button>
+          <button type="button" data-m="restore">Pulihkan</button>
+        </div>
+        <label class="field">Ukuran kuas <output id="o_brush">30</output>
+          <input type="range" id="brush" min="5" max="120" value="30"></label>
+        <div class="row">
+          <div class="seg" id="zoomSeg">
+            <button type="button" data-z="1" class="on">1×</button>
+            <button type="button" data-z="2">2×</button>
+            <button type="button" data-z="3">3×</button>
+          </div>
+          <button type="button" class="btn" id="undoMask">Batal</button>
+          <button type="button" class="btn" id="resetMask">Ulang otomatis</button>
+        </div>
+        <div class="row end">
+          <button type="button" class="btn" data-go="1">Ganti foto</button>
+          <button type="button" class="btn primary" data-go="3">Lanjut: Atur →</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== LANGKAH 3: ATUR ========== -->
+  <section class="panel" data-panel="3" hidden>
+    <div class="split">
+      <div class="stage frame-stage">
+        <div class="frame-box" id="frameBox">
+          <canvas id="cropCanvas"></canvas>
+          <svg id="guide" class="guide" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"></svg>
+        </div>
+        <p class="hint">Geser foto dengan jari/mouse, cubit atau gulir untuk memperbesar. Kepala di dalam oval, bahu menyentuh tepi bawah.</p>
+      </div>
+      <div class="ctrl">
+        <h2>Ukuran</h2>
+        <div class="sizes" id="sizes"></div>
+
+        <h2>Posisi</h2>
+        <label class="field">Perbesar <output id="o_zoom">100%</output>
+          <input type="range" id="zoom" min="30" max="300" value="100"></label>
+        <label class="field">Putar <output id="o_rot">0°</output>
+          <input type="range" id="rot" min="-15" max="15" step="0.5" value="0"></label>
+        <div class="row">
+          <button type="button" class="btn" id="autoFit">Posisi otomatis</button>
+          <label class="check"><input type="checkbox" id="showGuide" checked> Garis bantu</label>
+        </div>
+
+        <h2>Perbaiki foto <small>hanya diterapkan pada orangnya</small></h2>
+        <div class="row">
+          <button type="button" class="btn primary" id="autoFix">✦ Perbaiki otomatis</button>
+          <button type="button" class="btn" id="resetAdj">Reset</button>
+        </div>
+        <div id="adjFields"></div>
+
+        <div class="row end">
+          <button type="button" class="btn" data-go="2">← Latar</button>
+          <button type="button" class="btn primary" data-go="4">Lanjut: Simpan →</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== LANGKAH 4: SIMPAN & CETAK ========== -->
+  <section class="panel" data-panel="4" hidden>
+    <div class="split">
+      <div class="stage sheet-stage">
+        <canvas id="sheetCanvas"></canvas>
+        <p class="hint" id="sheetInfo"></p>
+      </div>
+      <div class="ctrl">
+        <h2>Satu foto</h2>
+        <p class="muted" id="singleInfo"></p>
+        <div class="row">
+          <button type="button" class="btn primary" id="dlSingle">Unduh foto (JPG)</button>
+          <button type="button" class="btn" id="shareSingle" hidden>Bagikan</button>
+        </div>
+
+        <h2>Lembar cetak</h2>
+        <label class="field">Kertas
+          <select id="paper"></select></label>
+        <p class="muted">Jumlah tiap ukuran (boleh campur):</p>
+        <div id="counts"></div>
+        <div class="row">
+          <button type="button" class="btn" id="fillMax">Isi penuh ukuran terpilih</button>
+          <button type="button" class="btn" id="clearCounts">Kosongkan</button>
+        </div>
+        <label class="check"><input type="checkbox" id="cutLines" checked> Garis potong</label>
+        <label class="check"><input type="checkbox" id="labelOn"> Tulis nama di bawah foto</label>
+        <input type="text" id="labelTxt" class="txt" placeholder="Nama (opsional)" hidden>
+        <div class="row">
+          <button type="button" class="btn primary" id="dlPdf">Unduh PDF</button>
+          <button type="button" class="btn" id="dlSheet">Unduh JPG</button>
+          <button type="button" class="btn" id="printSheet">Cetak</button>
+        </div>
+        <p class="muted small">Saat mencetak, pilih ukuran kertas yang sama dan skala <b>100% / ukuran sebenarnya</b> (jangan "sesuaikan halaman").</p>
+        <div class="row end">
+          <button type="button" class="btn" data-go="3">← Atur</button>
+          <button type="button" class="btn" data-go="1">Foto baru</button>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<div id="printArea" aria-hidden="true"></div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
