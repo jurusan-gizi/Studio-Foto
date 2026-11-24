@@ -115,7 +115,7 @@ async function loadFile(file) {
   const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
   const cx = cv.getContext('2d', { willReadFrequently: true }); cx.drawImage(bmp, 0, 0, w, h);
   S.src = cv; S.w = w; S.h = h; S.srcData = cx.getImageData(0, 0, w, h);
-  S.adj = ADJ0(); S.adjData = S.srcData; S.tf = null; S.undo = []; S.maskCtx = null; S.cut.width = 0;
+  S.adj = ADJ0(); S.adjData = S.srcData; S.tf = null; S.undo = []; S.redo = []; V.z = 1; S.maskCtx = null; S.cut.width = 0;
   syncAdjUI();
   setBusy(true, 'Menyiapkan…', 'Sebentar ya.', 0.05);
   S.maxStep = 2; goStep(2);
@@ -242,7 +242,7 @@ function buildMask() {
   const id = ctx.createImageData(S.w, S.h);
   for (let i = 0, j = 0; i < alpha.length; i++, j += 4) { id.data[j] = id.data[j + 1] = id.data[j + 2] = 255; id.data[j + 3] = alpha[i]; }
   ctx.putImageData(id, 0, 0);
-  S.maskCv = cv; S.maskCtx = ctx; S.autoMask = id; S.undo = [];
+  S.maskCv = cv; S.maskCtx = ctx; S.autoMask = id; S.undo = []; S.redo = []; syncHist(); V.z = 1;
 }
 
 /* ---------- pengolahan gambar ---------- */
@@ -348,15 +348,36 @@ $('#swatches').addEventListener('click', (e) => {
 $('#customColor').addEventListener('input', (e) => { S.bg = { id: 'custom', c: e.target.value }; store.set('bg', S.bg); renderSwatches(); rerender(); });
 function rerender() { if (S.step === 2) renderBgView(); else if (S.step === 3) renderCrop(); else if (S.step === 4) renderSheet(); }
 
-const bgCv = $('#bgCanvas');
+const bgCv = $('#bgCanvas'), view = $('#bgView'), ring = $('#ring');
+const V = { base: 1, z: 1, x: 0, y: 0, vw: 0, vh: 0 };
+function layoutView() {
+  const vw = view.parentElement.clientWidth - 28;
+  const maxH = Math.max(260, window.innerHeight * 0.68);
+  V.base = Math.min(vw / S.w, maxH / S.h, 1.6);
+  V.vw = vw; V.vh = Math.round(S.h * V.base);
+  view.style.height = V.vh + 'px';
+  bgCv.style.width = S.w * V.base + 'px'; bgCv.style.height = S.h * V.base + 'px';
+}
+function clampView() {
+  const cw = S.w * V.base * V.z, ch = S.h * V.base * V.z;
+  V.x = cw <= V.vw ? (V.vw - cw) / 2 : clamp(V.x, V.vw - cw, 0);
+  V.y = ch <= V.vh ? (V.vh - ch) / 2 : clamp(V.y, V.vh - ch, 0);
+}
+function applyView() {
+  clampView();
+  bgCv.style.transform = `translate(${V.x}px,${V.y}px) scale(${V.z})`;
+  $('#zoomTag').textContent = Math.round(V.z * 100) + '%';
+  $$('#zoomSeg button').forEach((x) => x.classList.toggle('on', Math.abs(+x.dataset.z - V.z) < 0.01));
+}
+function zoomAt(nz, px, py) {
+  nz = clamp(nz, 1, 8); const r = nz / V.z;
+  V.x = px - (px - V.x) * r; V.y = py - (py - V.y) * r; V.z = nz; applyView();
+}
+function resetView() { V.z = 1; V.x = 0; V.y = 0; applyView(); }
 function renderBgView() {
   if (!S.src) return;
-  const sc = $('#bgScroller');
-  const avail = Math.min(sc.parentElement.clientWidth - 28, 900);
-  const fit = Math.min(avail / S.w, (window.innerHeight * 0.68) / S.h);
-  const scale = Math.min(fit, 1.6) * S.zoom;
   if (bgCv.width !== S.w || bgCv.height !== S.h) { bgCv.width = S.w; bgCv.height = S.h; }
-  bgCv.style.width = Math.round(S.w * scale) + 'px'; bgCv.style.height = Math.round(S.h * scale) + 'px';
+  layoutView(); applyView();
   const ctx = bgCv.getContext('2d');
   paintBg(ctx, S.w, S.h);
   if (S.cut.width) ctx.drawImage(S.cut, 0, 0); else ctx.drawImage(S.src, 0, 0);
@@ -367,14 +388,48 @@ function bgSoon() { if (bgRaf) return; bgRaf = requestAnimationFrame(() => { bgR
 $('#brushMode').addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b) return;
   S.brushMode = b.dataset.m; $$('#brushMode button').forEach((x) => x.classList.toggle('on', x === b));
-  $('#bgScroller').classList.toggle('pan', S.brushMode === 'pan');
-  bgCv.style.cursor = S.brushMode === 'pan' ? 'grab' : 'crosshair';
+  view.classList.toggle('brush', S.brushMode !== 'pan');
 });
-$('#bgScroller').classList.add('pan');
 $('#zoomSeg').addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b) return;
-  S.zoom = +b.dataset.z; $$('#zoomSeg button').forEach((x) => x.classList.toggle('on', x === b)); renderBgView();
+  zoomAt(+b.dataset.z, V.vw / 2, V.vh / 2);
 });
+$('#fitBtn').addEventListener('click', resetView);
+
+/* ---- riwayat urungkan / ulangi (hanya kanal alpha agar hemat memori) ---- */
+const UNDO_MAX = 30;
+function snapAlpha() {
+  const d = S.maskCtx.getImageData(0, 0, S.w, S.h).data, a = new Uint8Array(S.w * S.h);
+  for (let i = 0, j = 3; i < a.length; i++, j += 4) a[i] = d[j];
+  return a;
+}
+function putAlpha(a) {
+  const id = S.maskCtx.createImageData(S.w, S.h), d = id.data;
+  for (let i = 0, j = 0; i < a.length; i++, j += 4) { d[j] = d[j + 1] = d[j + 2] = 255; d[j + 3] = a[i]; }
+  S.maskCtx.putImageData(id, 0, 0);
+}
+function pushUndo(entry) { S.undo.push(entry); if (S.undo.length > UNDO_MAX) S.undo.shift(); S.redo = []; syncHist(); }
+function syncHist() {
+  $('#undoBtn').disabled = !S.undo.length; $('#redoBtn').disabled = !(S.redo && S.redo.length);
+  $('#undoCount').textContent = S.undo.length || '';
+}
+function doUndo() {
+  const e = S.undo.pop(); if (!e) { toast('Tidak ada yang bisa diurungkan.'); return; }
+  S.redo.push({ a: snapAlpha() }); putAlpha(e.a); syncHist(); updateCut();
+}
+function doRedo() {
+  const e = (S.redo || []).pop(); if (!e) return;
+  S.undo.push({ a: snapAlpha() }); putAlpha(e.a); syncHist(); updateCut();
+}
+$('#undoBtn').addEventListener('click', doUndo);
+$('#redoBtn').addEventListener('click', doRedo);
+document.addEventListener('keydown', (e) => {
+  if (S.step !== 2 || !(e.ctrlKey || e.metaKey) || e.target.matches('input[type=text]')) return;
+  const k = e.key.toLowerCase();
+  if (k === 'z' && !e.shiftKey) { e.preventDefault(); doUndo(); }
+  else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); doRedo(); }
+});
+
 const rangeBind = (id, key, fmt, after) => {
   const el = $('#' + id), out = $('#o_' + id);
   el.value = S[key]; if (out) out.textContent = fmt ? fmt(S[key]) : S[key];
@@ -389,7 +444,6 @@ $('#cleanSpots').addEventListener('change', (e) => {
   if (S.rawAlpha) { buildMask(); S.tf = null; updateCut(); }
 });
 
-let painting = false, last = null, panStart = null;
 function imgPt(e) { const r = bgCv.getBoundingClientRect(); return { x: (e.clientX - r.left) * (S.w / r.width), y: (e.clientY - r.top) * (S.h / r.height), k: S.w / r.width }; }
 function dab(p) {
   const ctx = S.maskCtx, rad = (S.brush / 2) * p.k;
@@ -399,27 +453,76 @@ function dab(p) {
   g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(1, 'rgba(255,255,255,0)');
   ctx.fillStyle = g; ctx.beginPath(); ctx.arc(p.x, p.y, rad, 0, Math.PI * 2); ctx.fill(); ctx.restore();
 }
-bgCv.addEventListener('pointerdown', (e) => {
-  if (!S.maskCtx) return;
-  if (S.brushMode === 'pan') {
-    if (e.pointerType === 'mouse') { const sc = $('#bgScroller'); panStart = { x: e.clientX, y: e.clientY, l: sc.scrollLeft, t: sc.scrollTop }; bgCv.setPointerCapture(e.pointerId); }
-    return;
+function vpPt(e) { const r = view.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
+function showRing(e) {
+  if (S.brushMode === 'pan') { ring.hidden = true; return; }
+  const p = vpPt(e); ring.hidden = false;
+  ring.style.width = ring.style.height = S.brush + 'px';
+  ring.style.left = p.x + 'px'; ring.style.top = p.y + 'px';
+}
+// G = status gestur: 'paint' | 'pan' | 'pinch' | 'wait' (tunggu semua jari diangkat)
+const P = new Map(); let G = null, stroke = null, last = null, pan0 = null, pz0 = null, lastTap = null;
+view.addEventListener('pointerdown', (e) => {
+  if (!S.maskCtx || !$('#busy').hidden) return;
+  e.preventDefault(); view.setPointerCapture(e.pointerId);
+  P.set(e.pointerId, { x: e.clientX, y: e.clientY, t: performance.now(), x0: e.clientX, y0: e.clientY });
+  if (P.size === 2) {
+    if (G === 'paint' && stroke) { putAlpha(stroke.a); updateCut(); }   // jari kedua: batalkan coretan, mulai cubit
+    stroke = null; ring.hidden = true;
+    const [a, b] = [...P.values()], r = view.getBoundingClientRect();
+    pz0 = { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, mx: (a.x + b.x) / 2 - r.left, my: (a.y + b.y) / 2 - r.top, z: V.z, x: V.x, y: V.y };
+    G = 'pinch'; return;
   }
-  e.preventDefault(); bgCv.setPointerCapture(e.pointerId);
-  S.undo.push(S.maskCtx.getImageData(0, 0, S.w, S.h)); if (S.undo.length > 12) S.undo.shift();
-  painting = true; last = imgPt(e); dab(last); bgSoon();
+  if (P.size > 2 || G === 'wait') return;
+  if (S.brushMode === 'pan' || e.button === 1) { G = 'pan'; pan0 = { x: e.clientX, y: e.clientY, vx: V.x, vy: V.y }; return; }
+  G = 'paint'; stroke = { a: snapAlpha(), moved: false };
+  last = imgPt(e); dab(last); bgSoon(); showRing(e);
 });
-bgCv.addEventListener('pointermove', (e) => {
-  if (panStart) { const sc = $('#bgScroller'); sc.scrollLeft = panStart.l - (e.clientX - panStart.x); sc.scrollTop = panStart.t - (e.clientY - panStart.y); return; }
-  if (!painting) return;
-  const p = imgPt(e), dist = Math.hypot(p.x - last.x, p.y - last.y), step = Math.max(1, (S.brush * p.k) / 6);
-  for (let t = step; t <= dist; t += step) dab({ x: last.x + (p.x - last.x) * (t / dist), y: last.y + (p.y - last.y) * (t / dist), k: p.k });
-  last = p; bgSoon();
+view.addEventListener('pointermove', (e) => {
+  if (e.pointerType === 'mouse' && !P.size) { showRing(e); return; }
+  const p = P.get(e.pointerId); if (!p) return;
+  p.x = e.clientX; p.y = e.clientY;
+  if (Math.hypot(p.x - p.x0, p.y - p.y0) > 8) p.moved = true;
+  if (G === 'pinch' && P.size >= 2) {
+    const [a, b] = [...P.values()], r = view.getBoundingClientRect();
+    const d = Math.hypot(a.x - b.x, a.y - b.y), mx = (a.x + b.x) / 2 - r.left, my = (a.y + b.y) / 2 - r.top;
+    const nz = clamp(pz0.z * d / pz0.d, 1, 8), k = nz / pz0.z;
+    V.z = nz; V.x = mx - (pz0.mx - pz0.x) * k; V.y = my - (pz0.my - pz0.y) * k; applyView();
+  } else if (G === 'pan') {
+    V.x = pan0.vx + (e.clientX - pan0.x); V.y = pan0.vy + (e.clientY - pan0.y); applyView();
+  } else if (G === 'paint' && stroke) {
+    showRing(e);
+    const q = imgPt(e), dist = Math.hypot(q.x - last.x, q.y - last.y), step = Math.max(1, (S.brush * q.k) / 6);
+    for (let t = step; t <= dist; t += step) dab({ x: last.x + (q.x - last.x) * (t / dist), y: last.y + (q.y - last.y) * (t / dist), k: q.k });
+    if (dist > 0) stroke.moved = true;
+    last = q; bgSoon();
+  }
 });
-const endPaint = () => { painting = false; panStart = null; };
-bgCv.addEventListener('pointerup', endPaint); bgCv.addEventListener('pointercancel', endPaint);
-$('#undoMask').addEventListener('click', () => { const d = S.undo.pop(); if (!d) { toast('Tidak ada yang bisa dibatalkan.'); return; } S.maskCtx.putImageData(d, 0, 0); updateCut(); });
-$('#resetMask').addEventListener('click', () => { if (!S.autoMask) return; S.undo.push(S.maskCtx.getImageData(0, 0, S.w, S.h)); S.maskCtx.putImageData(S.autoMask, 0, 0); updateCut(); toast('Kembali ke hasil otomatis.'); });
+function pointerEnd(e) {
+  const p = P.get(e.pointerId); if (!p) return;
+  P.delete(e.pointerId);
+  const isTap = !p.moved && performance.now() - p.t < 280 && G !== 'pinch' && G !== 'wait';
+  if (G === 'paint' && stroke) { pushUndo({ a: stroke.a, tap: isTap }); stroke = null; }
+  if (e.pointerType !== 'mouse') ring.hidden = true;
+  if (isTap) {
+    const now = performance.now();
+    if (lastTap && now - lastTap.t < 320 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 30) {
+      // ketuk dua kali: kembali ke ukuran awal, dan batalkan titik kuas dari dua ketukan tadi
+      if (S.brushMode !== 'pan') {
+        let before = null;
+        for (let n = 0; n < 2 && S.undo.length && S.undo[S.undo.length - 1].tap; n++) before = S.undo.pop().a;
+        if (before) { putAlpha(before); S.redo = []; syncHist(); updateCut(); }
+      }
+      resetView(); lastTap = null;
+    } else lastTap = { t: now, x: e.clientX, y: e.clientY };
+  } else lastTap = null;
+  G = P.size ? 'wait' : null;
+}
+view.addEventListener('pointerup', pointerEnd);
+view.addEventListener('pointercancel', pointerEnd);
+view.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse' && !P.size) ring.hidden = true; });
+view.addEventListener('wheel', (e) => { e.preventDefault(); const p = vpPt(e); zoomAt(V.z * (e.deltaY < 0 ? 1.15 : 1 / 1.15), p.x, p.y); }, { passive: false });
+$('#resetMask').addEventListener('click', () => { if (!S.autoMask) return; pushUndo({ a: snapAlpha() }); S.maskCtx.putImageData(S.autoMask, 0, 0); updateCut(); toast('Kembali ke hasil otomatis. Bisa diurungkan dengan ↶.'); });
 
 /* ---------- langkah 3: ukuran, posisi, penyesuaian ---------- */
 function renderSizes() {
@@ -726,5 +829,5 @@ pill.addEventListener('click', () => { if (!pill.classList.contains('ok')) prepa
 /* ---------- mulai ---------- */
 renderSwatches(); renderSizes(); renderAdjFields(); renderCounts();
 if (S.bg.id === 'custom' && S.bg.c) $('#customColor').value = S.bg.c;
-window.addEventListener('resize', debounce(() => { if (S.step === 2) renderBgView(); if (S.step === 3) { layoutFrame(); renderCrop(); } }, 150));
+window.addEventListener('resize', debounce(() => { if (S.step === 2 && S.src) renderBgView(); if (S.step === 3) { layoutFrame(); renderCrop(); } }, 150));
 prepareOffline();

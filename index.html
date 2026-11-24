@@ -53,7 +53,17 @@
   <section class="panel" data-panel="2" hidden>
     <div class="split">
       <div class="stage" id="bgStageWrap">
-        <div class="scroller" id="bgScroller"><canvas id="bgCanvas"></canvas></div>
+        <div class="viewport" id="bgView">
+          <canvas id="bgCanvas"></canvas>
+          <div class="ring" id="ring" hidden></div>
+        </div>
+        <div class="floatbar" id="floatbar">
+          <button type="button" class="fbtn" id="undoBtn" title="Urungkan (Ctrl+Z)" aria-label="Urungkan" disabled>↶<span class="badge" id="undoCount"></span></button>
+          <button type="button" class="fbtn" id="redoBtn" title="Ulangi (Ctrl+Y)" aria-label="Ulangi" disabled>↷</button>
+          <button type="button" class="fbtn" id="fitBtn" title="Ukuran awal" aria-label="Kembali ke ukuran awal">⤢</button>
+        </div>
+        <div class="zoomtag" id="zoomTag">100%</div>
+        <p class="hint">Dua jari: cubit untuk perbesar &amp; geser · Satu jari: kuas · Ketuk 2×: ukuran awal</p>
         <div class="busy" id="busy" hidden>
           <div class="spin"></div>
           <b id="busyTitle">Menghapus latar…</b>
@@ -87,7 +97,6 @@
             <button type="button" data-z="2">2×</button>
             <button type="button" data-z="3">3×</button>
           </div>
-          <button type="button" class="btn" id="undoMask">Batal</button>
           <button type="button" class="btn" id="resetMask">Ulang otomatis</button>
         </div>
         <div class="row end">
