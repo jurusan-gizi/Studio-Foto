@@ -1,5 +1,5 @@
 // Service worker Studio Pas Foto — cache-first agar jalan tanpa internet
-const SHELL = 'pasfoto-shell-v2';
+const SHELL = 'pasfoto-shell-v3';
 const ENGINE = 'pasfoto-engine-v1'; // model AI (±65 MB) disimpan terpisah, tidak dihapus saat update
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest',
   'engine/bgr.mjs', 'engine/worker.js', 'icons/icon-192.png', 'icons/icon-512.png'];

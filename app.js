@@ -62,6 +62,7 @@ const S = {
   sizeId: store.get('size', '3x4'),
   tf: null, guide: true,
   paper: store.get('paper', '4r'), counts: {}, cutLines: true, labelOn: false, label: '',
+  cleanSpots: store.get('clean', true), rawAlpha: null,
   brushMode: 'pan', brush: 30, zoom: 1
 };
 const curSize = () => SIZES.find((s) => s.id === S.sizeId) || SIZES[1];
@@ -176,14 +177,72 @@ async function runSegmentation() {
     toast('Latar gagal dihapus otomatis. Gunakan kuas Hapus secara manual.');
     alpha = new Uint8Array(S.w * S.h).fill(255);
   }
+  S.rawAlpha = alpha;
+  buildMask();
+  S.maxStep = 4; goStep(2);
+  updateCut();
+}
+
+// buang bercak lepas (sisa dinding bertekstur) & tambal lubang kecil
+function cleanAlpha(src, w, h) {
+  const n = w * h, a = new Uint8Array(src);
+  for (let i = 0; i < n; i++) if (a[i] < 45) a[i] = 0;
+  const lab = new Int32Array(n), stack = new Int32Array(n), sizes = [0];
+  const label = (isFg, id) => (start) => {
+    let sp = 0, cnt = 0; stack[sp++] = start; lab[start] = id;
+    while (sp) {
+      const p = stack[--sp]; cnt++;
+      const x = p % w, y = (p / w) | 0;
+      if (x > 0 && !lab[p - 1] && isFg(p - 1)) { lab[p - 1] = id; stack[sp++] = p - 1; }
+      if (x < w - 1 && !lab[p + 1] && isFg(p + 1)) { lab[p + 1] = id; stack[sp++] = p + 1; }
+      if (y > 0 && !lab[p - w] && isFg(p - w)) { lab[p - w] = id; stack[sp++] = p - w; }
+      if (y < h - 1 && !lab[p + w] && isFg(p + w)) { lab[p + w] = id; stack[sp++] = p + w; }
+    }
+    return cnt;
+  };
+  // 1) komponen orang (alpha >= 128)
+  const fg = (p) => a[p] >= 128;
+  let id = 0;
+  for (let p = 0; p < n; p++) if (!lab[p] && fg(p)) { id++; sizes[id] = label(fg, id)(p); }
+  if (!id) return a;
+  const big = Math.max(...sizes.slice(1));
+  const keep = sizes.map((s, i) => i > 0 && s >= big * 0.12);
+  // piksel semi-transparan ikut komponen tetangga terdekat yang dipertahankan; selain itu dibuang
+  const near = new Uint8Array(n);
+  for (let p = 0; p < n; p++) if (lab[p] && keep[lab[p]]) near[p] = 1;
+  const R = Math.max(3, Math.round(Math.max(w, h) / 250));
+  // dilasi sederhana area yang dipertahankan (box) untuk menjaga tepi rambut halus
+  const rowAcc = new Uint16Array(n), dil = new Uint8Array(n);
+  for (let y = 0; y < h; y++) { let s = 0; const o = y * w;
+    for (let x = -R; x <= R; x++) if (x >= 0 && x < w) s += near[o + x];
+    for (let x = 0; x < w; x++) { rowAcc[o + x] = s; if (x - R >= 0) s -= near[o + x - R]; if (x + R + 1 < w) s += near[o + x + R + 1]; } }
+  for (let x = 0; x < w; x++) { let s = 0;
+    for (let y = -R; y <= R; y++) if (y >= 0 && y < h) s += rowAcc[y * w + x];
+    for (let y = 0; y < h; y++) { dil[y * w + x] = s > 0 ? 1 : 0; if (y - R >= 0) s -= rowAcc[(y - R) * w + x]; if (y + R + 1 < h) s += rowAcc[(y + R + 1) * w + x]; } }
+  for (let p = 0; p < n; p++) {
+    if (a[p] >= 128) { if (!keep[lab[p]]) a[p] = 0; }
+    else if (!dil[p]) a[p] = 0;
+  }
+  // 2) tambal lubang kecil di dalam badan (latar yang tidak menyentuh tepi foto)
+  lab.fill(0); const bgIds = [0], touch = [false]; let bid = 0;
+  const bg = (p) => a[p] < 128;
+  for (let p = 0; p < n; p++) if (!lab[p] && bg(p)) {
+    bid++; const cnt = label(bg, bid)(p); bgIds[bid] = cnt; touch[bid] = false;
+  }
+  for (let x = 0; x < w; x++) { touch[lab[x]] = true; touch[lab[(h - 1) * w + x]] = true; }
+  for (let y = 0; y < h; y++) { touch[lab[y * w]] = true; touch[lab[y * w + w - 1]] = true; }
+  const holeMax = n * 0.002;
+  for (let p = 0; p < n; p++) { const L = lab[p]; if (L && !touch[L] && bgIds[L] < holeMax) a[p] = 255; }
+  return a;
+}
+function buildMask() {
+  const alpha = S.cleanSpots ? cleanAlpha(S.rawAlpha, S.w, S.h) : S.rawAlpha;
   const cv = document.createElement('canvas'); cv.width = S.w; cv.height = S.h;
   const ctx = cv.getContext('2d', { willReadFrequently: true });
   const id = ctx.createImageData(S.w, S.h);
   for (let i = 0, j = 0; i < alpha.length; i++, j += 4) { id.data[j] = id.data[j + 1] = id.data[j + 2] = 255; id.data[j + 3] = alpha[i]; }
   ctx.putImageData(id, 0, 0);
   S.maskCv = cv; S.maskCtx = ctx; S.autoMask = id; S.undo = [];
-  S.maxStep = 4; goStep(2);
-  updateCut();
 }
 
 /* ---------- pengolahan gambar ---------- */
@@ -324,6 +383,11 @@ const rangeBind = (id, key, fmt, after) => {
 rangeBind('feather', 'feather', null, updateCutSoon);
 rangeBind('choke', 'choke', null, updateCutSoon);
 rangeBind('brush', 'brush');
+$('#cleanSpots').checked = S.cleanSpots;
+$('#cleanSpots').addEventListener('change', (e) => {
+  S.cleanSpots = e.target.checked; store.set('clean', S.cleanSpots);
+  if (S.rawAlpha) { buildMask(); S.tf = null; updateCut(); }
+});
 
 let painting = false, last = null, panStart = null;
 function imgPt(e) { const r = bgCv.getBoundingClientRect(); return { x: (e.clientX - r.left) * (S.w / r.width), y: (e.clientY - r.top) * (S.h / r.height), k: S.w / r.width }; }
